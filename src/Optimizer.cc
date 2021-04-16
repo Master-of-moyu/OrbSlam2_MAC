@@ -31,6 +31,7 @@
 #include <Eigen/StdVector>
 
 #include "Converter.h"
+#include "debug.h"
 
 #include <mutex>
 
@@ -705,6 +706,7 @@ void Optimizer::OptimizeEssentialGraph(Map *pMap, KeyFrame *pLoopKF, KeyFrame *p
                                        const LoopClosing::KeyFrameAndPose &NonCorrectedSim3,
                                        const LoopClosing::KeyFrameAndPose &CorrectedSim3,
                                        const map<KeyFrame *, set<KeyFrame *>> &LoopConnections, const bool &bFixScale) {
+    log_error("[OptimizeEssentialGraph] loopKF: %ld, currKF: %ld", pLoopKF->mnId, pCurKF->mnId);
     // Setup optimizer
     g2o::SparseOptimizer optimizer;
     optimizer.setVerbose(false);
@@ -740,7 +742,7 @@ void Optimizer::OptimizeEssentialGraph(Map *pMap, KeyFrame *pLoopKF, KeyFrame *p
 
         if (it != CorrectedSim3.end()) {
             vScw[nIDi] = it->second;
-            VSim3->setEstimate(it->second);
+            VSim3->setEstimate(it->second); // 这是接下来被优化的参数
         } else {
             Eigen::Matrix<double, 3, 3> Rcw = Converter::toMatrix3d(pKF->GetRotation());
             Eigen::Matrix<double, 3, 1> tcw = Converter::toVector3d(pKF->GetTranslation());
@@ -766,12 +768,14 @@ void Optimizer::OptimizeEssentialGraph(Map *pMap, KeyFrame *pLoopKF, KeyFrame *p
     const Eigen::Matrix<double, 7, 7> matLambda = Eigen::Matrix<double, 7, 7>::Identity();
 
     // Set Loop edges
+    log_error("--- start add loop edges");
     for (map<KeyFrame *, set<KeyFrame *>>::const_iterator mit = LoopConnections.begin(), mend = LoopConnections.end(); mit != mend; mit++) {
         KeyFrame *pKF = mit->first;
         const long unsigned int nIDi = pKF->mnId;
         const set<KeyFrame *> &spConnections = mit->second;
         const g2o::Sim3 Siw = vScw[nIDi];
         const g2o::Sim3 Swi = Siw.inverse();
+        log_error("  curKF: %ld", pKF->mnId);
 
         for (set<KeyFrame *>::const_iterator sit = spConnections.begin(), send = spConnections.end(); sit != send; sit++) {
             const long unsigned int nIDj = (*sit)->mnId;
@@ -791,14 +795,35 @@ void Optimizer::OptimizeEssentialGraph(Map *pMap, KeyFrame *pLoopKF, KeyFrame *p
             optimizer.addEdge(e);
 
             sInsertedEdges.insert(make_pair(min(nIDi, nIDj), max(nIDi, nIDj)));
+
+            {
+                Eigen::Matrix<double, 3, 3> Riw = Converter::toMatrix3d(pKF->GetRotation());
+                Eigen::Matrix<double, 3, 1> tiw = Converter::toVector3d(pKF->GetTranslation());
+                g2o::Sim3 Siw(Riw, tiw, 1.0);
+                g2o::Sim3 Swi = Siw.inverse();
+
+                Eigen::Matrix<double, 3, 3> Rjw = Converter::toMatrix3d((*sit)->GetRotation());
+                Eigen::Matrix<double, 3, 1> tjw = Converter::toVector3d((*sit)->GetTranslation());
+                g2o::Sim3 Sjw(Rjw, tjw, 1.0);
+
+                g2o::Sim3 Sji1 = Sjw * Swi;
+                log_error("    add edges: %ld - %ld, deltaT: %lf %lf %lf", nIDi, nIDj, Sji.translation().x(), Sji.translation().y(),
+                          Sji.translation().z());
+
+                log_error("                     true deltaT: %lf %lf %lf, scale: %lf", Sji1.translation().x(),
+                          Sji1.translation().y(), Sji1.translation().z(), Sji1.scale());
+            }
         }
     }
+    log_error("--- add loop edges done.");
 
     // Set normal edges
+    log_error("start add normal edges");
     for (size_t i = 0, iend = vpKFs.size(); i < iend; i++) {
         KeyFrame *pKF = vpKFs[i];
 
         const int nIDi = pKF->mnId;
+        log_error("  process KF: %ld", nIDi);
 
         g2o::Sim3 Swi;
 
@@ -833,6 +858,42 @@ void Optimizer::OptimizeEssentialGraph(Map *pMap, KeyFrame *pLoopKF, KeyFrame *p
 
             e->information() = matLambda;
             optimizer.addEdge(e);
+
+            {
+                Eigen::Matrix<double, 3, 3> Riw = Converter::toMatrix3d(pKF->GetRotation());
+                Eigen::Matrix<double, 3, 1> tiw = Converter::toVector3d(pKF->GetTranslation());
+                g2o::Sim3 Siw(Riw, tiw, 1.0);
+                g2o::Sim3 Swi = Siw.inverse();
+
+                Eigen::Matrix<double, 3, 3> Rjw = Converter::toMatrix3d(pParentKF->GetRotation());
+                Eigen::Matrix<double, 3, 1> tjw = Converter::toVector3d(pParentKF->GetTranslation());
+                g2o::Sim3 Sjw(Rjw, tjw, 1.0);
+
+                g2o::Sim3 Sji1 = Sjw * Swi;
+                if (LoopConnections.find(pParentKF) != LoopConnections.end()) {
+                    log_error("    add parent edges: %ld - %ld, deltaT: %lf %lf %lf, scale: %lf", nIDi, nIDj, Sji.translation().x(),
+                              Sji.translation().y(), Sji.translation().z(), Sji.scale());
+
+                    log_error("                            true deltaT: %lf %lf %lf, scale: %lf", Sji1.translation().x(),
+                              Sji1.translation().y(), Sji1.translation().z(), Sji1.scale());
+
+                    // log_error("     set rotation: %lf %lf %lf %lf", Sji.rotation().w(), Sji.rotation().x(),
+                    //           Sji.rotation().y(), Sji.rotation().z());
+                    // log_error("    true rotation: %lf %lf %lf %lf", Sji1.rotation().w(), Sji1.rotation().x(),
+                    //           Sji1.rotation().y(), Sji1.rotation().z());
+                } else {
+                    log_error("    nonCorr parent edges: %ld - %ld, deltaT: %lf %lf %lf, scale: %lf", nIDi, nIDj, Sji.translation().x(),
+                              Sji.translation().y(), Sji.translation().z(), Sji.scale());
+
+                    log_error("                                true deltaT: %lf %lf %lf, scale: %lf", Sji1.translation().x(),
+                              Sji1.translation().y(), Sji1.translation().z(), Sji1.scale());
+
+                    // log_error("     set rotation: %lf %lf %lf %lf", Sji.rotation().w(), Sji.rotation().x(),
+                    //           Sji.rotation().y(), Sji.rotation().z());
+                    // log_error("    true rotation: %lf %lf %lf %lf", Sji1.rotation().w(), Sji1.rotation().x(),
+                    //           Sji1.rotation().y(), Sji1.rotation().z());
+                }
+            }
         }
 
         // Loop edges
@@ -856,6 +917,7 @@ void Optimizer::OptimizeEssentialGraph(Map *pMap, KeyFrame *pLoopKF, KeyFrame *p
                 el->setMeasurement(Sli);
                 el->information() = matLambda;
                 optimizer.addEdge(el);
+                // log_error("    add loop edges: %ld - %ld", nIDi, pLKF->mnId);
             }
         }
 
@@ -885,14 +947,37 @@ void Optimizer::OptimizeEssentialGraph(Map *pMap, KeyFrame *pLoopKF, KeyFrame *p
                     en->setMeasurement(Sni);
                     en->information() = matLambda;
                     optimizer.addEdge(en);
+
+                    {
+                        Eigen::Matrix<double, 3, 3> Riw = Converter::toMatrix3d(pKF->GetRotation());
+                        Eigen::Matrix<double, 3, 1> tiw = Converter::toVector3d(pKF->GetTranslation());
+                        g2o::Sim3 Siw(Riw, tiw, 1.0);
+                        g2o::Sim3 Swi = Siw.inverse();
+
+                        Eigen::Matrix<double, 3, 3> Rjw = Converter::toMatrix3d(pKFn->GetRotation());
+                        Eigen::Matrix<double, 3, 1> tjw = Converter::toVector3d(pKFn->GetTranslation());
+                        g2o::Sim3 Sjw(Rjw, tjw, 1.0);
+
+                        g2o::Sim3 Sji1 = Sjw * Swi;
+
+                        // if (LoopConnections.find(pKFn) != LoopConnections.end() && LoopConnections.find(pKF) != LoopConnections.end()) {
+                        //     log_error("    add Covisibility edges: %ld - %ld", nIDi, pKFn->mnId);
+                        // }
+                        // log_error("    Covisibility edge: %ld - %ld, deltaT: %lf %lf %lf, scale: %lf", nIDi, pKFn->mnId, Sni.translation().x(),
+                        //           Sni.translation().y(), Sni.translation().z(), Sni.scale());
+
+                        // log_error("                           true deltaT: %lf %lf %lf, scale: %lf", Sji1.translation().x(),
+                        //           Sji1.translation().y(), Sji1.translation().z(), Sji1.scale());
+                    }
                 }
             }
         }
     }
-
+    log_error("start optimize");
     // Optimize!
     optimizer.initializeOptimization();
     optimizer.optimize(20);
+    log_error("optimize done");
 
     unique_lock<mutex> lock(pMap->mMutexMapUpdate);
 

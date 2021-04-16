@@ -31,6 +31,7 @@
 
 #include "Optimizer.h"
 #include "PnPsolver.h"
+#include "debug.h"
 
 #include <iostream>
 
@@ -41,8 +42,10 @@ using namespace std;
 
 namespace ORB_SLAM2 {
 
-Tracking::Tracking(System *pSys, ORBVocabulary *pVoc, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer, Map *pMap, KeyFrameDatabase *pKFDB, const string &strSettingPath, const int sensor) :
-    mState(NO_IMAGES_YET), mSensor(sensor), mbOnlyTracking(false), mbVO(false), mpORBVocabulary(pVoc),
+Tracking::Tracking(System *pSys, ORBVocabulary *pVoc, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer,
+                   Map *pMap, KeyFrameDatabase *pKFDB, const string &strSettingPath, const int sensor) :
+    mState(NO_IMAGES_YET),
+    mSensor(sensor), mbOnlyTracking(false), mbVO(false), mpORBVocabulary(pVoc),
     mpKeyFrameDB(pKFDB), mpInitializer(static_cast<Initializer *>(NULL)), mpSystem(pSys), mpViewer(NULL),
     mpFrameDrawer(pFrameDrawer), mpMapDrawer(pMapDrawer), mpMap(pMap), mnLastRelocFrameId(0) {
     // Load camera parameters from settings file
@@ -245,7 +248,9 @@ void Tracking::Track() {
     // Get Map Mutex -> Map cannot be changed
     unique_lock<mutex> lock(mpMap->mMutexMapUpdate);
 
+    log_debug("");
     if (mState == NOT_INITIALIZED) {
+        log_debug("Initialization, frame id: %ld", mCurrentFrame.mnId);
         if (mSensor == System::STEREO || mSensor == System::RGBD)
             StereoInitialization();
         else
@@ -256,11 +261,13 @@ void Tracking::Track() {
         if (mState != OK)
             return;
     } else {
+        log_debug("[Tracking] frame id: %ld", mCurrentFrame.mnId);
         // System is initialized. Track Frame.
         bool bOK;
 
         // Initial camera pose estimation using motion model or relocalization (if tracking is lost)
         if (!mbOnlyTracking) {
+            // log_debug("not only tracking");
             // Local Mapping is activated. This is the normal behaviour, unless
             // you explicitly activate the "only tracking" mode.
 
@@ -582,9 +589,30 @@ void Tracking::CreateInitialMapMonocular() {
         mpMap->AddMapPoint(pMP);
     }
 
+    // log_debug("before update connect, kf size: %d", mpMap->KeyFrameNum());
+    // std::vector<KeyFrame *> allKFs = mpMap->GetAllKeyFrames();
+    // for (int i = 0; i < allKFs.size(); i++) {
+    //     std::cout << "KF id: " << allKFs[i]->mnId << ", connect kfs ids are: " << std::endl;
+    //     for (int j = 0; j < allKFs[i]->mvpOrderedConnectedKeyFrames.size(); j++) {
+    //         std::cout << "   id: " << allKFs[i]->mvpOrderedConnectedKeyFrames[j]->mnId << ", weight: " << allKFs[i]->mvOrderedWeights[j] << std::endl;
+    //     }
+    //     std::cout << std::endl;
+    // }
+
     // Update Connections
     pKFini->UpdateConnections();
     pKFcur->UpdateConnections();
+
+    // log_debug("");
+    // log_debug("after update connect, kf size: %d", mpMap->KeyFrameNum());
+    // allKFs = mpMap->GetAllKeyFrames();
+    // for (int i = 0; i < allKFs.size(); i++) {
+    //     std::cout << "KF id: " << allKFs[i]->mnId << ", connect kfs ids are: " << std::endl;
+    //     for (int j = 0; j < allKFs[i]->mvpOrderedConnectedKeyFrames.size(); j++) {
+    //         std::cout << "   id: " << allKFs[i]->mvpOrderedConnectedKeyFrames[j]->mnId << ", weight: " << allKFs[i]->mvOrderedWeights[j] << std::endl;
+    //     }
+    //     std::cout << std::endl;
+    // }
 
     // Bundle Adjustment
     cout << "New Map created with " << mpMap->MapPointsInMap() << " points" << endl;
@@ -687,6 +715,7 @@ bool Tracking::TrackReferenceKeyFrame() {
                 nmatchesMap++;
         }
     }
+    log_debug("[TrackReferenceKeyFrame] tracked map point: %d, OK: %d", nmatchesMap, nmatchesMap >= 10);
 
     return nmatchesMap >= 10;
 }
@@ -802,6 +831,8 @@ bool Tracking::TrackWithMotionModel() {
         return nmatches > 20;
     }
 
+    // log_debug("[TrackWithMotionModel] tracked map point: %d, OK: %d", nmatchesMap, nmatchesMap >= 10);
+
     return nmatchesMap >= 10;
 }
 
@@ -834,13 +865,18 @@ bool Tracking::TrackLocalMap() {
 
     // Decide if the tracking was succesful
     // More restrictive if there was a relocalization recently
-    if (mCurrentFrame.mnId < mnLastRelocFrameId + mMaxFrames && mnMatchesInliers < 50)
+    if (mCurrentFrame.mnId < mnLastRelocFrameId + mMaxFrames && mnMatchesInliers < 50) {
+        log_debug("[TrackLocalMap] inlier: %d, false", mnMatchesInliers);
         return false;
+    }
 
-    if (mnMatchesInliers < 30)
+    if (mnMatchesInliers < 30) {
+        log_debug("[TrackLocalMap] inlier: %d, false", mnMatchesInliers);
         return false;
-    else
+    } else {
+        // log_debug("[TrackLocalMap] inlier: %d, true", mnMatchesInliers);
         return true;
+    }
 }
 
 bool Tracking::NeedNewKeyFrame() {
@@ -986,6 +1022,7 @@ void Tracking::CreateNewKeyFrame() {
 
     mnLastKeyFrameId = mCurrentFrame.mnId;
     mpLastKeyFrame = pKF;
+    log_debug("[Tracking] create a KF, curr id: %ld, KF id: %ld", mCurrentFrame.mnId, pKF->mnId);
 }
 
 void Tracking::SearchLocalPoints() {

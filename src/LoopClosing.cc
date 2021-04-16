@@ -27,6 +27,7 @@
 #include "Optimizer.h"
 
 #include "ORBmatcher.h"
+#include "debug.h"
 
 #include <mutex>
 #include <thread>
@@ -103,11 +104,27 @@ bool LoopClosing::DetectLoop() {
         mpCurrentKF->SetErase();
         return false;
     }
+    // log_error("detect count: %d, mvConsistentGroups size: %zu", detectCount, mvConsistentGroups.size());
+    // if (mvConsistentGroups.size() > 0) {
+    //     for (int i = 0; i < mvConsistentGroups.size(); i++) {
+    //         log_error("group: %d, Consistency: %d, KF are:", i, mvConsistentGroups[i].second);
+    //         std::set<KeyFrame *> kfs = mvConsistentGroups[i].first;
+    //         for (std::set<KeyFrame *>::iterator it = kfs.begin(); it != kfs.end(); it++) {
+    //             std::cout << (*it)->mnId << " ";
+    //         }
+    //         std::cout << std::endl;
+    //     }
+    // }
 
     // Compute reference BoW similarity score
     // This is the lowest score to a connected keyframe in the covisibility graph
     // We will impose loop candidates to have a higher similarity than this
     const vector<KeyFrame *> vpConnectedKeyFrames = mpCurrentKF->GetVectorCovisibleKeyFrames();
+    // log_error("current connect KFs are: ");
+    // for (int i = 0; i < vpConnectedKeyFrames.size(); i++) {
+    //     std::cout << vpConnectedKeyFrames[i]->mnId << " ";
+    // }
+    // std::cout << std::endl;
     const DBoW2::BowVector &CurrentBowVec = mpCurrentKF->mBowVec;
     float minScore = 1;
     for (size_t i = 0; i < vpConnectedKeyFrames.size(); i++) {
@@ -125,6 +142,20 @@ bool LoopClosing::DetectLoop() {
     // Query the database imposing the minimum score
     vector<KeyFrame *> vpCandidateKFs = mpKeyFrameDB->DetectLoopCandidates(mpCurrentKF, minScore);
 
+    log_error("[LoopClosing] process KF: %ld, covisible num: %zu, candidate num: %zu",
+              mpCurrentKF->mnId, vpConnectedKeyFrames.size(), vpCandidateKFs.size());
+    log_error("current connect KFs are: ");
+    for (int i = 0; i < vpConnectedKeyFrames.size(); i++) {
+        std::cout << vpConnectedKeyFrames[i]->mnId << " ";
+    }
+    std::cout << std::endl;
+    // if (vpCandidateKFs.size() > 0) {
+    //     log_error("candidate KFs are: ");
+    //     for (int i = 0; i < vpCandidateKFs.size(); i++) {
+    //         std::cout << vpCandidateKFs[i]->mnId << " ";
+    //     }
+    //     std::cout << std::endl;
+    // }
     // If there are no loop candidates, just add new keyframe and return false
     if (vpCandidateKFs.empty()) {
         mpKeyFrameDB->add(mpCurrentKF);
@@ -146,6 +177,11 @@ bool LoopClosing::DetectLoop() {
 
         set<KeyFrame *> spCandidateGroup = pCandidateKF->GetConnectedKeyFrames();
         spCandidateGroup.insert(pCandidateKF);
+        log_error("candidate KF: %ld, connections are: ", pCandidateKF->mnId);
+        for (set<KeyFrame *>::iterator it = spCandidateGroup.begin(); it != spCandidateGroup.end(); it++) {
+            std::cout << (*it)->mnId << " ";
+        }
+        std::cout << std::endl;
 
         bool bEnoughConsistent = false;
         bool bConsistentForSomeGroup = false;
@@ -157,6 +193,7 @@ bool LoopClosing::DetectLoop() {
                 if (sPreviousGroup.count(*sit)) {
                     bConsistent = true;
                     bConsistentForSomeGroup = true;
+                    // log_error(" find a bConsistent, iG: %zu", iG);
                     break;
                 }
             }
@@ -168,18 +205,29 @@ bool LoopClosing::DetectLoop() {
                     ConsistentGroup cg = make_pair(spCandidateGroup, nCurrentConsistency);
                     vCurrentConsistentGroups.push_back(cg);
                     vbConsistentGroup[iG] = true; //this avoid to include the same group more than once
+                    // log_error(" create a ConsistentGroup, KFs are: ");
+                    // for (std::set<KeyFrame *>::iterator it = spCandidateGroup.begin(); it != spCandidateGroup.end(); it++) {
+                    //     std::cout << (*it)->mnId << " ";
+                    // }
+                    // std::cout << std::endl;
                 }
                 if (nCurrentConsistency >= mnCovisibilityConsistencyTh && !bEnoughConsistent) {
                     mvpEnoughConsistentCandidates.push_back(pCandidateKF);
                     bEnoughConsistent = true; //this avoid to insert the same candidate more than once
+                    // log_error("find Enough Consistent");
                 }
             }
         }
 
         // If the group is not consistent with any previous group insert with consistency counter set to zero
         if (!bConsistentForSomeGroup) {
+            // log_error("--- not Consistent For Some Group, create one, KFs are: ");
             ConsistentGroup cg = make_pair(spCandidateGroup, 0);
             vCurrentConsistentGroups.push_back(cg);
+            // for (std::set<KeyFrame *>::iterator it = spCandidateGroup.begin(); it != spCandidateGroup.end(); it++) {
+            //     std::cout << (*it)->mnId << " ";
+            // }
+            // std::cout << std::endl;
         }
     }
 
@@ -193,6 +241,7 @@ bool LoopClosing::DetectLoop() {
         mpCurrentKF->SetErase();
         return false;
     } else {
+        log_error("[LoopClosing] DetectLoop return true");
         return true;
     }
 
@@ -290,6 +339,7 @@ bool LoopClosing::ComputeSim3() {
                 if (nInliers >= 20) {
                     bMatch = true;
                     mpMatchedKF = pKF;
+                    log_error("matched KF: %ld", mpMatchedKF->mnId);
                     g2o::Sim3 gSmw(Converter::toMatrix3d(pKF->GetRotation()), Converter::toVector3d(pKF->GetTranslation()), 1.0);
                     mg2oScw = gScm * gSmw;
                     mScw = Converter::toCvMat(mg2oScw);
@@ -305,6 +355,7 @@ bool LoopClosing::ComputeSim3() {
         for (int i = 0; i < nInitialCandidates; i++)
             mvpEnoughConsistentCandidates[i]->SetErase();
         mpCurrentKF->SetErase();
+        log_error("[LoopClosing] Sim3, no match!");
         return false;
     }
 
@@ -345,12 +396,13 @@ bool LoopClosing::ComputeSim3() {
         for (int i = 0; i < nInitialCandidates; i++)
             mvpEnoughConsistentCandidates[i]->SetErase();
         mpCurrentKF->SetErase();
+        log_error("[LoopClosing] Sim3, total matches: %d", nTotalMatches);
         return false;
     }
 }
 
 void LoopClosing::CorrectLoop() {
-    cout << "Loop detected!" << endl;
+    cout << "------------------Loop detected!--------------------------------------------------------------------" << endl;
 
     // Send a stop signal to Local Mapping
     // Avoid new keyframes are inserted while correcting the loop
@@ -409,9 +461,13 @@ void LoopClosing::CorrectLoop() {
             g2o::Sim3 g2oSiw(Converter::toMatrix3d(Riw), Converter::toVector3d(tiw), 1.0);
             //Pose without correction
             NonCorrectedSim3[pKFi] = g2oSiw;
+            // log_info("KF: %ld, non_corr scale: %.2f, t: %lf, %lf %lf, corr scale: %lf, t: %lf %lf %lf", pKFi->mnId,
+            //          g2oSiw.scale(), g2oSiw.translation().x(), g2oSiw.translation().y(), g2oSiw.translation().z(), CorrectedSim3[pKFi].scale(),
+            //          CorrectedSim3[pKFi].translation().x(), CorrectedSim3[pKFi].translation().y(), CorrectedSim3[pKFi].translation().z());
         }
 
         // Correct all MapPoints obsrved by current keyframe and neighbors, so that they align with the other side of the loop
+        log_error("corrected frame: ");
         for (KeyFrameAndPose::iterator mit = CorrectedSim3.begin(), mend = CorrectedSim3.end(); mit != mend; mit++) {
             KeyFrame *pKFi = mit->first;
             g2o::Sim3 g2oCorrectedSiw = mit->second;
@@ -450,11 +506,23 @@ void LoopClosing::CorrectLoop() {
 
             cv::Mat correctedTiw = Converter::toCvSE3(eigR, eigt);
 
+            // cv::Mat TiwTemp = pKFi->GetPose();
+            // cv::Mat tic = TiwTemp.rowRange(0, 3).col(3);
+            // Eigen::Vector3d pp = Converter::toVector3d(tic);
+            // log_error("KF: %ld, before correct p: %lf %lf %lf", pKFi->mnId, pp[0], pp[1], pp[2]);
+
             pKFi->SetPose(correctedTiw);
+            std::cout << pKFi->mnId << " ";
+
+            // TiwTemp = pKFi->GetPose();
+            // tic = TiwTemp.rowRange(0, 3).col(3);
+            // pp = Converter::toVector3d(tic);
+            // log_error("KF: %ld, after correct p: %lf %lf %lf", pKFi->mnId, pp[0], pp[1], pp[2]);
 
             // Make sure connections are updated
             pKFi->UpdateConnections();
         }
+        std::cout << std::endl;
 
         // Start Loop Fusion
         // Update matched map points and replace if duplicated
@@ -482,17 +550,41 @@ void LoopClosing::CorrectLoop() {
     map<KeyFrame *, set<KeyFrame *>> LoopConnections;
 
     for (vector<KeyFrame *>::iterator vit = mvpCurrentConnectedKFs.begin(), vend = mvpCurrentConnectedKFs.end(); vit != vend; vit++) {
+        log_error("");
         KeyFrame *pKFi = *vit;
         vector<KeyFrame *> vpPreviousNeighbors = pKFi->GetVectorCovisibleKeyFrames();
+        log_error("KF: %ld, Previous Neighbors are: ", pKFi->mnId);
+        for (vector<KeyFrame *>::iterator it = vpPreviousNeighbors.begin(); it != vpPreviousNeighbors.end(); it++) {
+            std::cout << (*it)->mnId << " ";
+        }
+        std::cout << std::endl;
 
         // Update connections. Detect new links.
         pKFi->UpdateConnections();
         LoopConnections[pKFi] = pKFi->GetConnectedKeyFrames();
+        {
+            log_error("after UpdateConnections, New Neighbors are: ");
+            set<KeyFrame *> pKFS = pKFi->GetConnectedKeyFrames();
+            for (set<KeyFrame *>::iterator it = pKFS.begin(); it != pKFS.end(); it++) {
+                std::cout << (*it)->mnId << " ";
+            }
+            std::cout << std::endl;
+        }
+
         for (vector<KeyFrame *>::iterator vit_prev = vpPreviousNeighbors.begin(), vend_prev = vpPreviousNeighbors.end(); vit_prev != vend_prev; vit_prev++) {
             LoopConnections[pKFi].erase(*vit_prev);
         }
         for (vector<KeyFrame *>::iterator vit2 = mvpCurrentConnectedKFs.begin(), vend2 = mvpCurrentConnectedKFs.end(); vit2 != vend2; vit2++) {
             LoopConnections[pKFi].erase(*vit2);
+        }
+
+        {
+            log_error("after erase some connect, left connects are: ");
+            set<KeyFrame *> pKFS = LoopConnections[pKFi];
+            for (set<KeyFrame *>::iterator it = pKFS.begin(); it != pKFS.end(); it++) {
+                std::cout << (*it)->mnId << " ";
+            }
+            std::cout << std::endl;
         }
     }
 

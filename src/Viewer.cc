@@ -70,6 +70,7 @@ void Viewer::Run() {
     pangolin::Var<bool> menuLocalizationMode("menu.Localization Mode", false, true);
     pangolin::Var<bool> menuReset("menu.Reset", false, false);
     pangolin::Var<bool> menuFinish("menu.Finish", false, false);
+    pangolin::Var<bool> menuStop("menu.stop", false, false);
 
     // Define Camera Render Object (for view / scene browsing)
     pangolin::OpenGlRenderState s_cam(
@@ -144,6 +145,13 @@ void Viewer::Run() {
 
         if (menuFinish) {
             RequestFinish();
+        }
+
+        if (!menuStop) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            mpSystem->pangolinStop = menuStop;
+        } else {
+            mpSystem->pangolinStop = menuStop;
         }
 
         if (Stop()) {

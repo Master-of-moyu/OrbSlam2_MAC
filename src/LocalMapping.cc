@@ -22,6 +22,7 @@
 #include "LoopClosing.h"
 #include "ORBmatcher.h"
 #include "Optimizer.h"
+#include "debug.h"
 
 #include <mutex>
 #include <unistd.h>
@@ -119,6 +120,7 @@ void LocalMapping::ProcessNewKeyFrame() {
 
     // Compute Bags of Words structures
     mpCurrentKeyFrame->ComputeBoW();
+    log_trace("[LocalMapping] process KF id: %zu", mpCurrentKeyFrame->mnId);
 
     // Associate MapPoints to the new keyframe and update normal and descriptor
     const vector<MapPoint *> vpMapPointMatches = mpCurrentKeyFrame->GetMapPointMatches();
@@ -141,6 +143,13 @@ void LocalMapping::ProcessNewKeyFrame() {
 
     // Update links in the Covisibility Graph
     mpCurrentKeyFrame->UpdateConnections();
+
+    // log_trace("[LocalMapping] after UpdateConnections(), curr KF connects are:");
+    // for (auto it = mpCurrentKeyFrame->mConnectedKeyFrameWeights.begin();
+    //      it != mpCurrentKeyFrame->mConnectedKeyFrameWeights.end(); it++) {
+    //     std::pair<KeyFrame *, int> kfWeight = *it;
+    //     log_trace("    KF id: %ld, weight: %d", kfWeight.first->mnId, kfWeight.second);
+    // }
 
     // Insert Keyframe in Map
     mpMap->AddKeyFrame(mpCurrentKeyFrame);

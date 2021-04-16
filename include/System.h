@@ -120,6 +120,8 @@ public:
 
     void StartViewer();
 
+    bool pangolinStop = false;
+
 private:
     // Input sensor
     eSensor mSensor;
